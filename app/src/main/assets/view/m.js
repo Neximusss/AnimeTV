@@ -30,6 +30,7 @@ const __SD8=(__SD==8);
 const __SD9=(__SD==9);
 const __SD10=(__SD==10);
 const __SD11=(__SD==11);
+const __SD12=(__SD==12);
 
 // pahe anime => document.querySelectorAll('.content-wrapper .tab-content .row div a[title]');
 
@@ -46,7 +47,7 @@ var _ISELECTRON=('isElectron' in _JSAPI);
 
 const __SOURCE_NAME=[
   'AnimeKAI', 'Anix', 'Aniwatch', 'Aniwatch', 'Animeflix', 'KickAss', 'Gojo', 'Miruro', 'Everything',
-  'MegaPlay', '9anime'
+  'MegaPlay', '9anime', 'AnimeNexus'
 ];
 // https://kickass-anime.ro/
 const __SOURCE_DOMAINS=[
@@ -60,12 +61,13 @@ const __SOURCE_DOMAINS=[
   ['www.miruro.tv'],
   ['everything'], /* SD9: virtual aggregate source */
   ['megaplay.buzz'], /* SD10: AniList catalog + megaplay streams */
-  ['9anime.tech'] /* SD11: 9anime.tech (HTML + Byse embed) */
+  ['9anime.tech'], /* SD11: 9anime.tech (HTML + Byse embed) */
+  ['anime.nexus'] /* SD12: AnimeNexus */
 ];
 
 /* Sources actives : AnimeKAI(1), Anix(2), Animeflix(5) et Gojo(7) sont
    mortes et masquees de la liste de selection (les index sont preserves) */
-const __SOURCE_ACTIVE=[10,6,3,8,11,9];
+const __SOURCE_ACTIVE=[12,10,6,3,8,11,9];
 const __SOURCE_ACTIVE_NAME=__SOURCE_ACTIVE.map(function(s){return __SOURCE_NAME[s-1];});
 
 /* video res change */
@@ -111,9 +113,14 @@ const __SD_NAME = __SD+". "+(__SOURCE_NAME[__SD-1]);
 var __SD_DOMAIN = "";
 function SD_CHECK_DOMAIN(sd,cb){
   var sm=sd-1;
+  if (sd==12){
+    if (cb){
+      cb([{dn:'anime.nexus',st:2,tm:0}]);
+    }
+    return true;
+  }
   if (sm<0 || sd>8){
-    /* SD9 (Everything, virtuelle) et SD10 (MegaPlay, domaine unique)
-       n'ont pas de selection de domaine a benchmarker */
+    /* Sources virtuelles / domaine unique : pas de benchmark. */
     return false;
   }
   var chk_url='/manifest.json';
@@ -1110,6 +1117,237 @@ var miruro={
 
 
 
+
+
+/******************* ANIMENEXUS *************************/
+var nexus={
+  api:'https://api.anime.nexus/api',
+  site:'https://anime.nexus',
+  assets:'https://assets.anime.nexus',
+
+  getAnimeId:function(url){
+    var raw=(url||'')+'';
+    var m=raw.match(/\/series\/([^\/#?]+)/);
+    if (m) return m[1];
+    var p=raw.split('#');
+    return p[0];
+  },
+
+  headers:function(){
+    return {
+      'Accept':'application/json, text/plain, */*',
+      'Origin':nexus.site,
+      'Referer':nexus.site+'/'
+    };
+  },
+
+  getFilterOrigin:function(){
+    return nexus.headers();
+  },
+
+  getFilterUrl:function(q,genres,sort,page,ses,year){
+    var qq=((q||'')+'').trim();
+    var p=[];
+    if (qq) p.push('search='+enc(qq));
+    p.push('page='+(page||1));
+    p.push('sortBy='+enc(sort==2?'updated_at desc':'name asc'));
+    p.push('hasVideos=1');
+    p.push('includes[]='+enc('poster'));
+    p.push('includes[]='+enc('genres'));
+    return '/__proxy/'+nexus.api+'/anime/shows?'+p.join('&');
+  },
+
+  poster:function(p){
+    try{
+      if (!p) return '';
+      var rz=p.resized||{};
+      var best='', bw=0;
+      for (var k in rz){
+        var w=parseInt((k+'').split('x')[0])||0;
+        if (w>bw){ bw=w; best=rz[k]; }
+      }
+      if (best && best.indexOf('http')===0) return best;
+      if (p.url) return p.url;
+      if (p.src) return p.src;
+    }catch(e){}
+    return '';
+  },
+
+  animeObj:function(u){
+    if (!u) return null;
+    var genres=[];
+    var genreNames=[];
+    try{
+      var gs=u.genres||[];
+      for (var i=0;i<gs.length;i++){
+        var g=gs[i];
+        var name=(typeof g==='string')?g:(g.name||g.title||'');
+        if (name){
+          genreNames.push(name);
+          genres.push({name:name,val:(name+'').toLowerCase()});
+        }
+      }
+    }catch(e){}
+    return {
+      url:u.id,
+      tip:u.id,
+      ttid:u.id,
+      title:u.name||u.name_alt||'',
+      title_jp:u.name_alt||u.name||'',
+      synopsis:u.description||'',
+      poster:nexus.poster(u.poster),
+      banner:nexus.poster(u.banner),
+      genre:genreNames.join(', '),
+      genres:genres,
+      ep:u.episode_count||0,
+      epavail:u.episode_count||0,
+      epdub:0,
+      type:(u.type||'TV').toUpperCase(),
+      rating:(u.score||u.rating||'')+'',
+      status:u.status||''
+    };
+  },
+
+  getTooltip:function(id,cb,url,isview){
+    if (!id) id=nexus.getAnimeId(url);
+    if (!id){ cb(null); return; }
+    $ap(nexus.api+'/anime/details?id='+enc(id),function(r){
+      if (!r.ok){ cb(null); return; }
+      try{
+        var j=JSON.parse(r.responseText);
+        var u=('data' in j)?j.data:j;
+        cb(nexus.animeObj(u));
+      }catch(e){
+        console.warn('AnimeNexus tooltip error',e);
+        cb(null);
+      }
+    },nexus.headers());
+  },
+
+  getView:function(url,f){
+    var uid=++_API.viewid;
+    var ux=((url||'')+'').split('#');
+    var id=nexus.getAnimeId(ux[0]);
+    var wantEp=ux.length>1?parseInt(ux[1]):1;
+    if (!wantEp || wantEp<1) wantEp=1;
+    if (!id){
+      f({status:false},uid);
+      return uid;
+    }
+
+    var state={detail:null,eps:null,n:0};
+    function done(){
+      if (++state.n<2) return;
+      if (!state.detail || !state.eps){
+        f({status:false},uid);
+        return;
+      }
+      var b=nexus.animeObj(state.detail)||{};
+      var o={
+        idMal:state.detail.mal_id||state.detail.id_mal||null,
+        title:b.title||'',
+        title_jp:b.title_jp||b.title||'',
+        synopsis:b.synopsis||'',
+        genres:b.genres||[],
+        genre:b.genre||'',
+        quality:null,
+        banner:b.banner||null,
+        poster:b.poster||'',
+        rating:b.rating||'',
+        ttid:id,
+        url:id,
+        status:true,
+        epavail:state.eps.length,
+        epdub:0,
+        type:b.type||'TV',
+        info:{type:{val:'_tv',name:b.type||'TV'},rating:b.rating||'',quality:null},
+        ep:[],
+        epactive:0,
+        servers:{dub:[],sub:[pb.serverobj('AnimeNexus',0)],softsub:[]},
+        streamtype:'sub',
+        stream_url:{}
+      };
+      for (var i=0;i<state.eps.length;i++){
+        var ep=state.eps[i]||{};
+        var num=parseInt(ep.number)||i+1;
+        var oe={
+          ep:num,
+          epid:ep.id,
+          url:id+'#'+num,
+          active:num==wantEp,
+          filler:!!ep.filler,
+          title:ep.title||('Episode '+num),
+          title_jp:ep.title||('Episode '+num),
+          img:nexus.poster(ep.thumbnail||ep.poster)
+        };
+        if (oe.active) o.epactive=i;
+        o.ep.push(oe);
+      }
+      if (o.ep.length && !o.ep[o.epactive].active){
+        o.epactive=0;
+        o.ep[0].active=true;
+      }
+      f(JSON.parse(JSON.stringify(o)),uid);
+    }
+
+    $ap(nexus.api+'/anime/details?id='+enc(id),function(r){
+      if (r.ok){
+        try{
+          var j=JSON.parse(r.responseText);
+          state.detail=('data' in j)?j.data:j;
+        }catch(e){}
+      }
+      done();
+    },nexus.headers());
+
+    $ap(nexus.api+'/anime/details/episodes?id='+enc(id)+'&page=1&perPage=200&order=asc&fillers=true&recaps=true',function(r){
+      if (r.ok){
+        try{
+          var j=JSON.parse(r.responseText);
+          state.eps=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
+        }catch(e){}
+      }
+      done();
+    },nexus.headers());
+
+    return uid;
+  },
+
+  loadVideo:function(dt,f){
+    var ep=dt && dt.ep ? dt.ep[dt.epactive] : null;
+    if (!ep || !ep.epid){ f(null); return; }
+    var u=nexus.api+'/anime/details/episode/stream?id='+enc(ep.epid)+'&fillers=true&recaps=true';
+    $ap(u,function(r){
+      if (!r.ok){ f(null); return; }
+      try{
+        var j=JSON.parse(r.responseText);
+        var d=('data' in j)?j.data:j;
+        /*
+         * IMPORTANT: data.hls is protected. The master playlist plus every
+         * variant/segment require the AnimeNexus websocket token service.
+         * Do not feed this URL to the ordinary Media3 DataSource.
+         */
+        f({d:d,nexusProtected:true,episodeId:ep.epid});
+      }catch(e){
+        console.warn('AnimeNexus stream metadata error',e);
+        f(null);
+      }
+    },nexus.headers());
+  },
+
+  recent_parse:function(v){
+    var out=[];
+    try{
+      var j=JSON.parse(v);
+      var a=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
+      for (var i=0;i<a.length;i++){
+        var d=nexus.animeObj(a[i]);
+        if (d) out.push(d);
+      }
+    }catch(e){}
+    return out;
+  }
+};
 
 /* GOJO SOURCE */
 var gojo={
@@ -5810,6 +6048,9 @@ const _API={
     else if (__SD11){
       return ninenime.getAnimeId(url);
     }
+    else if (__SD12){
+      return nexus.getAnimeId(url);
+    }
     else{
       var url_parse=url.split('/');
       if (url_parse.length>=5){
@@ -5882,6 +6123,8 @@ const _API={
       return megaplay.getFilterOrigin();
     else if (__SD11)
       return ninenime.getFilterOrigin();
+    else if (__SD12)
+      return nexus.getFilterOrigin();
     return null;
   },
 
@@ -5904,6 +6147,9 @@ const _API={
     }
     else if (__SD11){
       return ninenime.getFilterUrl(q,genres,sort,page,ses,year);
+    }
+    else if (__SD12){
+      return nexus.getFilterUrl(q,genres,sort,page,ses,year);
     }
     else if (!__SD3 && !__SD5){
       var qv=[];
@@ -6352,6 +6598,9 @@ const _API={
     }
     else if (__SD11){
       return ninenime.getView(url,f);
+    }
+    else if (__SD12){
+      return nexus.getView(url,f);
     }
     else if (__SDKAI){
       return kai.getView(url,f);
@@ -7105,6 +7354,9 @@ const _API={
     }
     else if (__SD11){
       return ninenime.getTooltip(id, cb, url, 0);
+    }
+    else if (__SD12){
+      return nexus.getTooltip(id, cb, url, isview);
     }
 
     if (!id && url){
@@ -10782,6 +11034,22 @@ const pb={
         pb.flix_load_video(pb.data, true, function(){
           pb.updateStreamTypeInfo();
           pb.flix_play_video();
+        });
+      }
+      else if (__SD12){
+        nexus.loadVideo(pb.data,function(v){
+          pb.updateStreamTypeInfo();
+          if (!v){
+            pb.playback_error(
+              'ANIMENEXUS ERROR',
+              'Unable to load AnimeNexus stream metadata.'
+            );
+            return;
+          }
+          pb.playback_error(
+            'ANIMENEXUS TRANSPORT',
+            'Catalog, details and episodes are connected. Native signed HLS transport is being enabled next.'
+          );
         });
       }
       else if (__SD11){
@@ -14825,6 +15093,9 @@ const home={
     }
     else if (__SD11){
       rd=ninenime.recent_parse(v);
+    }
+    else if (__SD12){
+      rd=nexus.recent_parse(v);
     }
     else if (__SD5){
       // Hi Anime
