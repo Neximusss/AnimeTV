@@ -66,6 +66,16 @@ public class MainActivity extends FragmentActivity {
 
   @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
+    if (aView != null && aView.isNexusWebPlayerActive()) {
+      if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+        if (event.getAction() == KeyEvent.ACTION_UP) {
+          aView.closeNexusWebPlayer();
+        }
+        return true;
+      }
+      /* Let the focused AnimeNexus WebView receive its own DPAD/media keys. */
+      return super.dispatchKeyEvent(event);
+    }
     if (sendKeyEvent(event.getKeyCode(), event.getAction())) {
       /* Touche consommee par le JS */
       return false;

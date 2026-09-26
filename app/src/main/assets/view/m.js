@@ -1278,6 +1278,7 @@ var nexus={
           filler:!!ep.filler,
           title:ep.title||('Episode '+num),
           title_jp:ep.title||('Episode '+num),
+          slug:ep.slug||'',
           img:nexus.poster(ep.thumbnail||ep.poster)
         };
         if (oe.active) o.epactive=i;
@@ -11037,20 +11038,15 @@ const pb={
         });
       }
       else if (__SD12){
-        nexus.loadVideo(pb.data,function(v){
-          pb.updateStreamTypeInfo();
-          if (!v){
-            pb.playback_error(
-              'ANIMENEXUS ERROR',
-              'Unable to load AnimeNexus stream metadata.'
-            );
-            return;
-          }
-          pb.playback_error(
-            'ANIMENEXUS TRANSPORT',
-            'Catalog, details and episodes are connected. Native signed HLS transport is being enabled next.'
-          );
-        });
+        var nxep=pb.data && pb.data.ep ? pb.data.ep[pb.data.epactive] : null;
+        if (!nxep || !nxep.epid){
+          pb.playback_error('ANIMENEXUS ERROR','Episode information is missing.');
+        }
+        else{
+          var nxurl='https://anime.nexus/watch/'+nxep.epid;
+          if (nxep.slug) nxurl+='/'+nxep.slug;
+          _JSAPI.openNexusWatch(nxurl);
+        }
       }
       else if (__SD11){
         ninenime.loadVideo(pb.data, function(v){
