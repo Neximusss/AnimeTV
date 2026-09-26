@@ -26,6 +26,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
@@ -117,6 +118,8 @@ public class AnimeView extends WebViewClient {
 
   public final Activity activity;
   public final WebView webView;
+  /** Official AnimeNexus watch page, shown only while an episode is open. */
+  public WebView nexusWebView = null;
   public TextureView videoView = null;
   public ExoPlayer videoPlayer = null;
   public final ImageView splash;
@@ -235,6 +238,155 @@ public class AnimeView extends WebViewClient {
     webView.loadUrl("https://" + Conf.getDomain() + "/__view/login/login.html#appstart");
 
     AnimeProvider.executeJob(activity);
+  }
+
+  /** Returns true while the official AnimeNexus watch page is open. */
+  public boolean isNexusWebPlayerActive() {
+    return nexusWebView != null;
+  }
+
+  /** Close only the AnimeNexus player overlay, keeping the AnimeTV UI alive. */
+  public boolean closeNexusWebPlayer() {
+    if (nexusWebView == null) {
+      return false;
+    }
+    final WebView player = nexusWebView;
+    nexusWebView = null;
+    activity.runOnUiThread(() -> {
+      try {
+        CookieManager.getInstance().flush();
+        player.stopLoading();
+        player.loadUrl("about:blank");
+        player.clearHistory();
+        ViewGroup parent = (ViewGroup) player.getParent();
+        if (parent != null) {
+          parent.removeView(player);
+        }
+        player.destroy();
+        webView.requestFocus();
+      } catch (Exception e) {
+        ALog.e(_TAG, "closeNexusWebPlayer", e);
+      }
+    });
+    return true;
+  }
+
+  /** Open AnimeNexus' supported watch page in a dedicated full-screen WebView. */
+  public void openNexusWebPlayer(String url) {
+    if (url == null || !url.startsWith("https://anime.nexus/watch/")) {
+      ALog.e(_TAG, "Rejected AnimeNexus player URL: " + url);
+      return;
+    }
+    activity.runOnUiThread(() -> {
+      try {
+        closeNexusWebPlayer();
+
+        FrameLayout root = activity.findViewById(R.id.main_browse_fragment);
+        WebView player = new WebView(activity);
+        nexusWebView = player;
+        player.setBackgroundColor(android.graphics.Color.BLACK);
+        player.setFocusable(true);
+        player.setFocusableInTouchMode(true);
+        player.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+
+        WebSettings s = player.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setJavaScriptCanOpenWindowsAutomatically(true);
+        s.setSupportMultipleWindows(false);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(true);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        /* Deliberately keep Android System WebView's stock User-Agent.
+         * Cloudflare/Turnstile should see the real embedded browser. */
+        CompatImpl.configureWebView(s);
+
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        if (Build.VERSION.SDK_INT >= 21) {
+          cm.setAcceptThirdPartyCookies(player, true);
+        }
+
+        player.setWebChromeClient(new WebChromeClient());
+        player.setWebViewClient(new WebViewClient() {
+          @Override
+          public boolean shouldOverrideUrlLoading(WebView view,
+              WebResourceRequest request) {
+            Uri u = request.getUrl();
+            String scheme = u.getScheme();
+            return !("https".equalsIgnoreCase(scheme) ||
+                "http".equalsIgnoreCase(scheme));
+          }
+
+          @Override
+          public void onPageFinished(WebView view, String loadedUrl) {
+            super.onPageFinished(view, loadedUrl);
+            try {
+              String js = aApi.assetsString("inject/nexus_tv.js");
+              view.evaluateJavascript(js, null);
+            } catch (Exception e) {
+              ALog.e(_TAG, "AnimeNexus TV helper injection", e);
+            }
+            view.requestFocus();
+          }
+        });
+
+        player.setOnKeyListener((v, keyCode, event) -> {
+          if (event.getAction() != android.view.KeyEvent.ACTION_DOWN) {
+            return false;
+          }
+          String js = null;
+          switch (keyCode) {
+            case android.view.KeyEvent.KEYCODE_DPAD_LEFT:
+              js = "window.__animeNexusTv&&__animeNexusTv.move('left')";
+              break;
+            case android.view.KeyEvent.KEYCODE_DPAD_RIGHT:
+              js = "window.__animeNexusTv&&__animeNexusTv.move('right')";
+              break;
+            case android.view.KeyEvent.KEYCODE_DPAD_UP:
+              js = "window.__animeNexusTv&&__animeNexusTv.move('up')";
+              break;
+            case android.view.KeyEvent.KEYCODE_DPAD_DOWN:
+              js = "window.__animeNexusTv&&__animeNexusTv.move('down')";
+              break;
+            case android.view.KeyEvent.KEYCODE_DPAD_CENTER:
+            case android.view.KeyEvent.KEYCODE_ENTER:
+              js = "window.__animeNexusTv&&__animeNexusTv.activate()";
+              break;
+            case android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+              js = "window.__animeNexusTv&&__animeNexusTv.media('toggle')";
+              break;
+            case android.view.KeyEvent.KEYCODE_MEDIA_PLAY:
+              js = "window.__animeNexusTv&&__animeNexusTv.media('play')";
+              break;
+            case android.view.KeyEvent.KEYCODE_MEDIA_PAUSE:
+              js = "window.__animeNexusTv&&__animeNexusTv.media('pause')";
+              break;
+            case android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+              js = "window.__animeNexusTv&&__animeNexusTv.media('ff')";
+              break;
+            case android.view.KeyEvent.KEYCODE_MEDIA_REWIND:
+              js = "window.__animeNexusTv&&__animeNexusTv.media('rew')";
+              break;
+            default:
+              return false;
+          }
+          player.evaluateJavascript(js, null);
+          return true;
+        });
+
+        root.addView(player, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT));
+        player.bringToFront();
+        player.requestFocus();
+        player.loadUrl(url);
+      } catch (Exception e) {
+        ALog.e(_TAG, "openNexusWebPlayer", e);
+        closeNexusWebPlayer();
+      }
+    });
   }
 
   /* ------------------------------------------------------------------
@@ -1726,6 +1878,11 @@ public class AnimeView extends WebViewClient {
     }
 
     @JavascriptInterface
+    public void openNexusWatch(String url) {
+      openNexusWebPlayer(url);
+    }
+
+    @JavascriptInterface
     public void reloadHome() {
       runOnUiThreadWait(() ->
           webView.loadUrl("https://" + Conf.getDomain() + "/__view/main.html"));
@@ -2298,6 +2455,10 @@ public class AnimeView extends WebViewClient {
 
   /** Libere le lecteur, la WebView et la reconnaissance vocale. */
   public void release() {
+    try {
+      closeNexusWebPlayer();
+    } catch (Exception ignored) {
+    }
     try {
       if (voiceRecognizer != null) {
         voiceRecognizer.destroy();
