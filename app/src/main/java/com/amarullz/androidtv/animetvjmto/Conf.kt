@@ -36,7 +36,8 @@ object Conf {
         "www.miruro.tv",  /* 8 : Miruro */
         "everything",     /* 9 : Everything (virtual, aggregates all sources) */
         "megaplay.buzz",  /* 10 : MegaPlay (catalogue AniList + streams megaplay) */
-        "9anime.tech"     /* 11 : 9anime (catalogue HTML + embed Byse) */
+        "9anime.tech",    /* 11 : 9anime (catalogue HTML + embed Byse) */
+        "anime.nexus"      /* 12 : AnimeNexus */
     )
 
     /** API utilisee par la source 5 (animeflix). */
@@ -69,6 +70,7 @@ object Conf {
         source == 9 -> 9   /* Everything : virtuelle, toujours valide */
         source == 10 -> 10 /* MegaPlay : AniList + megaplay.buzz */
         source == 11 -> 11 /* 9anime : HTML + embed Byse */
+        source == 12 -> 12 /* AnimeNexus */
         else -> source
     }
 
