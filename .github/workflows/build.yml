@@ -1,0 +1,123 @@
+name: Build APK
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Le runner ubuntu-latest embarque deja le SDK Android (cmdline-tools
+      # preinstalles). L'action android-actions/setup-android@v3 tente de
+      # retélécharger une version obsolete des cmdline-tools (HTTP 404).
+      # On utilise donc le sdkmanager preinstalle (chemin complet, il n'est
+      # pas dans le PATH) pour accepter les licences et s'assurer que la
+      # plateforme compileSdk=35 est presente.
+      - name: Setup Android SDK (preinstalled)
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+          "$SDKM" --sdk_root="$SDK_ROOT" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew testLegacyDebugUnitTest testModernDebugUnitTest
+
+      - name: Build release APK (legacy + modern)
+        run: ./gradlew assembleRelease
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: animetv-apks
+          path: app/build/outputs/apk/*/release/*.apk
+
+      - name: Read version info
+        id: ver
+        run: |
+          VER=$(grep -oP 'versionName "\K[^"]+' app/build.gradle)
+          VCODE=$(grep -oP 'versionCode \K[0-9]+' app/build.gradle)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "versioncode=$VCODE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          TAG="v$VERSION"
+          APK_LEGACY=$(ls app/build/outputs/apk/legacy/release/*.apk | head -1)
+          APK_MODERN=$(ls app/build/outputs/apk/modern/release/*.apk | head -1)
+          SHA_L=$(sha256sum "$APK_LEGACY" | cut -d' ' -f1)
+          SHA_M=$(sha256sum "$APK_MODERN" | cut -d' ' -f1)
+          gh release delete "$TAG" -y --cleanup-tag || true
+          gh release create "$TAG" "$APK_LEGACY" "$APK_MODERN" \
+            --title "AnimeTV $VERSION" \
+            --notes "$COMMIT_MSG
+
+          SHA-256 legacy: \`$SHA_L\`
+          SHA-256 modern: \`$SHA_M\`" \
+            --latest
+          # Assets a nom fixe pour les URLs de telechargement direct stables
+          cp "$APK_LEGACY" animetv-latest.apk
+          cp "$APK_MODERN" animetv-latest-modern.apk
+          gh release upload "$TAG" animetv-latest.apk animetv-latest-modern.apk --clobber
+
+      - name: Publish last-nightly metadata asset
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          VERSIONCODE: ${{ steps.ver.outputs.versioncode }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          REPO: ${{ github.repository }}
+        run: |
+          APK=$(ls app/build/outputs/apk/legacy/release/*.apk | head -1)
+          FNAME=$(basename "$APK")
+          SIZE=$(python3 -c "import os;print(f\"{os.path.getsize('$APK')/1048576:.1f}MB\")")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          TAG="v$VERSION"
+          URL="https://github.com/$REPO/releases/download/$TAG/$FNAME"
+          TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          FNAME="$FNAME" SIZE="$SIZE" TAG="$TAG" URL="$URL" TIME="$TIME" \
+          VNUM="$VERSIONCODE" MSG="$COMMIT_MSG" SHA="$SHA" python3 - <<'EOF'
+          import json, os
+          entry = [{
+              "vnum": int(os.environ["VNUM"]),
+              "name": os.environ["TAG"],
+              "time": os.environ["TIME"],
+              "filename": os.environ["FNAME"],
+              "filesize": os.environ["SIZE"],
+              "content": os.environ["MSG"],
+              "url": os.environ["URL"],
+              "sha256": os.environ["SHA"]
+          }]
+          with open("last-nightly", "w") as f:
+              json.dump(entry, f, indent=2)
+          EOF
+          gh release upload "$TAG" last-nightly --clobber
