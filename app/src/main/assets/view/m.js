@@ -1150,7 +1150,7 @@ var nexus={
     var p=[];
     if (qq) p.push('search='+enc(qq));
     p.push('page='+(page||1));
-    p.push('sortBy='+enc(sort==2?'updated_at desc':'name asc'));
+    p.push('sortBy='+enc(sort==2?'created_at desc':'name asc'));
     p.push('hasVideos=1');
     p.push('includes[]='+enc('poster'));
     p.push('includes[]='+enc('genres'));
@@ -1158,17 +1158,26 @@ var nexus={
   },
 
   poster:function(p){
+    function abs(v){
+      if (!v) return '';
+      v=(v+'').trim();
+      if (v.indexOf('http://')===0 || v.indexOf('https://')===0) return v;
+      if (v.indexOf('//')===0) return 'https:'+v;
+      if (v.charAt(0)!='/') v='/'+v;
+      return 'https://anime.delivery'+v;
+    }
     try{
       if (!p) return '';
+      if (typeof p==='string') return abs(p);
       var rz=p.resized||{};
       var best='', bw=0;
       for (var k in rz){
         var w=parseInt((k+'').split('x')[0])||0;
         if (w>bw){ bw=w; best=rz[k]; }
       }
-      if (best && best.indexOf('http')===0) return best;
-      if (p.url) return p.url;
-      if (p.src) return p.src;
+      if (best) return abs(best);
+      if (p.url) return abs(p.url);
+      if (p.src) return abs(p.src);
     }catch(e){}
     return '';
   },
@@ -15287,7 +15296,7 @@ const home={
     $a(g._ajaxurl+''+load_page,function(r){
       if (r.ok){
         try{
-          if (__SD3||__SD5||__SD6||__SD7||__SD8||__SD11){
+          if (__SD3||__SD5||__SD6||__SD7||__SD8||__SD11||__SD12){
             home.recent_parse(g,r.responseText);
           }
           else{
@@ -15990,7 +15999,7 @@ const home={
       el.__last_touch=$tick()+5000;
     });
 
-    if (__SD6||pb.cfg_data.alisthomess||(__SD==2)||__SD7||__SD8||__SD9||__SD10||__SD11){
+    if (__SD6||pb.cfg_data.alisthomess||(__SD==2)||__SD7||__SD8||__SD9||__SD10||__SD11||__SD12){
       home.home_anilist_load();
       return;
     }
@@ -16453,6 +16462,17 @@ const home={
         ["movies",'/browse/movies?page=', "Movies", false]
       ];
     }
+    else if (__SD12){
+      /* AnimeNexus public catalogue API. Keep the URL proxied through
+         AnimeTV so the WebView only ever talks to the app origin. */
+      var nxbase='/__proxy/https://api.anime.nexus/api/anime/shows?hasVideos=true'
+        +'&includes%5B%5D=poster&includes%5B%5D=genres&includes%5B%5D=background';
+      homepage=[
+        ["recent",nxbase+'&sortBy='+enc('created_at desc')+'&page=', "Recently Added", true],
+        ["released",nxbase+'&sortBy='+enc('release_date desc')+'&page=', "Recently Released", true],
+        ["az",nxbase+'&sortBy='+enc('name asc')+'&page=', "A-Z", false]
+      ];
+    }
     else if (__SD8){
       miruro.provider=miruro.getProvider();
       // miruro
@@ -16622,7 +16642,7 @@ const home={
       }
 
       if (c=='source_domain'){
-        if (elm._arg==9 || elm._arg==10 || elm._arg==11){
+        if (elm._arg==9 || elm._arg==10 || elm._arg==11 || elm._arg==12){
           /* pas de choix de domaine pour ces sources */
           _API.showToast("No domain selection for this source");
         }
